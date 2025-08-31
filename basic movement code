@@ -1,0 +1,65 @@
+import cv2
+import RPi.GPIO as GPIO
+import time
+
+# --- HC-SR04 SETUP ---
+GPIO.setmode(GPIO.BCM)
+TRIG = 23
+ECHO = 24
+GPIO.setup(TRIG, GPIO.OUT)
+GPIO.setup(ECHO, GPIO.IN)
+
+def get_distance():
+    GPIO.output(TRIG, True)
+    time.sleep(0.00001)
+    GPIO.output(TRIG, False)
+
+    StartTime = time.time()
+    StopTime = time.time()
+
+    while GPIO.input(ECHO) == 0:
+        StartTime = time.time()
+
+    while GPIO.input(ECHO) == 1:
+        StopTime = time.time()
+
+    TimeElapsed = StopTime - StartTime
+    distance = (TimeElapsed * 34300) / 2
+    return distance
+
+# --- CAMERA + CANNY SETUP ---
+cap = cv2.VideoCapture(0)
+
+try:
+    while True:
+        # --- CAMERA PROCESSING ---
+        ret, frame = cap.read()
+        if not ret:
+            print("Failed to capture frame")
+            break
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blurred, 50, 150)
+        cv2.imshow('Edges', edges)
+
+        # --- SENSOR READING ---
+        dist = get_distance()
+        print(f"Distance: {dist:.2f} cm")
+
+        if dist < 20:  # Threshold distance in cm
+            print("Obstacle too close! Take evasive action.")
+            # Add motor control code here to stop or turn
+        else:
+            print("Path is clear.")
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+except KeyboardInterrupt:
+    print("Interrupted by user")
+
+finally:
+    cap.release()
+    cv2.destroyAllWindows()
+    GPIO.cleanup()
