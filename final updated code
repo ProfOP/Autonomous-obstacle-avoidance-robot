@@ -1,0 +1,125 @@
+import cv2
+import RPi.GPIO as GPIO
+import time
+
+# ——— GPIO PIN ASSIGNMENTS ———
+TRIG = 17
+ECHO = 27
+LED  = 26
+M1A, M1B = 23, 24
+M2A, M2B = 25, 8
+
+# ——— SETUP ———
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(TRIG, GPIO.OUT)
+GPIO.setup(ECHO, GPIO.IN)
+GPIO.setup(LED, GPIO.OUT)
+for pin in (M1A, M1B, M2A, M2B):
+    GPIO.setup(pin, GPIO.OUT)
+
+# give sensor & camera a moment
+time.sleep(5)
+
+# open camera
+cap = cv2.VideoCapture(0)
+
+def get_distance():
+    """Trigger HC‑SR04, blink LED during echo, return cm."""
+    GPIO.output(TRIG, False)
+    time.sleep(0.1)
+    GPIO.output(TRIG, True)
+    time.sleep(0.00001)
+    GPIO.output(TRIG, False)
+
+    while GPIO.input(ECHO) == 0:
+        GPIO.output(LED, False)
+        pulse_start = time.time()
+
+    while GPIO.input(ECHO) == 1:
+        GPIO.output(LED, True)
+        pulse_end = time.time()
+
+    pulse_duration = pulse_end - pulse_start
+    distance = pulse_duration * 17150  # speed of sound / 2
+    return round(distance, 2)
+
+def process_frame():
+    """Grab a frame, run Canny, show it."""
+    ret, frame = cap.read()
+    if not ret:
+        print("Failed to capture frame")
+        return False
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blurred, 50, 150)
+    cv2.imshow('Edges', edges)
+    return True
+
+def stop():
+    for pin in (M1A, M1B, M2A, M2B):
+        GPIO.output(pin, 0)
+
+def forward():
+    GPIO.output(M1A, 1); GPIO.output(M1B, 0)
+    GPIO.output(M2A, 1); GPIO.output(M2B, 0)
+
+def turn_left():
+    GPIO.output(M1A, 1); GPIO.output(M1B, 0)
+    GPIO.output(M2A, 0); GPIO.output(M2B, 0)
+
+def turn_right():
+    GPIO.output(M1A, 0); GPIO.output(M1B, 0)
+    GPIO.output(M2A, 1); GPIO.output(M2B, 0)
+
+try:
+    while True:
+        # 1) Vision
+        if not process_frame():
+            break
+
+        # 2) Distance
+        dist = get_distance()
+        print(f"Distance: {dist:.2f} cm")
+
+        # 3) Motion logic
+        if dist < 15:
+            print("Obstacle detected! Trying to turn left...")
+            turn_left()
+            time.sleep(1)
+            stop()
+            time.sleep(0.5)
+            new_dist = get_distance()
+
+            if new_dist < 15:
+                print("Still blocked! Trying to turn right...")
+                turn_right()
+                time.sleep(1)
+                stop()
+                time.sleep(0.5)
+                final_dist = get_distance()
+
+                if final_dist < 15:
+                    print("Path blocked. Stopping robot.")
+                    stop()
+                    time.sleep(1)
+                else:
+                    print("Path clear after right turn. Moving forward.")
+                    forward()
+            else:
+                print("Path clear after left turn. Moving forward.")
+                forward()
+        else:
+            forward()
+
+        # 4) Exit on 'q'
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+except KeyboardInterrupt:
+    print("Interrupted by user")
+
+finally:
+    stop()
+    cap.release()
+    cv2.destroyAllWindows()
+    GPIO.cleanup()
